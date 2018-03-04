@@ -1,0 +1,499 @@
+
+//Using Spark - Load Data into RDD from HDFS & Local File system
+//Transform Data - Perform Data ETL
+//Read and Write files in variety of file formats
+//Write data from RDD to HDFS
+
+
+Help:
+spark-shell --help
+
+//Initializing spark-shell (Scala)
+
+
+spark-shell \
+--master yarn \
+--conf spark.ui.port=12654
+
+
+Note: Spark-shell = scala + spark dependencies + implicit variables (sc & Sqlcontext)
+	sc : Web service available on a port
+
+spark-shell \
+--master yarn \
+--conf spark.ui.port=12654 \
+--num-executors 1 \
+--executor-memory 512M
+
+
+stopping existing sparkcontext: sc.stop
+
+
+// Programatically Initialize (In Projects)
+
+import org.apache.spark.{SparkConf, SparkContext}
+val conf = new SparkConf().setAppName("First SC").setMaster("yarn-client")
+val sc = new SparkContext(conf)
+sc.getconf.getAll.foreach(println)
+
+
+
+// Creating RDD using spark-shell, from HDFS Location & Local File system
+// /user/cloudera/sqoop_import/retail_db/orders/
+
+spark-shell \
+--master yarn \
+--conf spark.ui.port=12654 \
+--num-executors 1 \
+--executor-memory 512M
+
+sc.getConf.getAll.foreach(println)
+ 
+// Data in HDFS location
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders/")
+
+
+
+//Data in Local file system (Unix) to Scala Collection
+
+val productsRaw = scala.io.Source.fromFile("/home/cloudera/workspace/learning_data/data-master/retail_db/products/part-00000").getLines.toList
+
+//Scala Collection to RDD - Parallize
+val products = sc.parallelize(productsRaw)
+
+//view Rdd Data
+products.first
+products.take(10)
+products.takeSample(true,10)
+products.collect
+
+
+//Read from Different File Formats
+
+-orc
+-json
+-parquet
+-avro 
+
+All of these can be read using sqlContext
+
+sqlContext.load
+sqlContext.read
+
+
+//reading json file in HDFS to get the Dataframe 
+
+1-val ordersDF = sqlContext.read.json("/user/cloudera/learning/orders")
+2-val ordersDF = sqlContext.load("/user/cloudera/learning/orders","json").show
+
+//preview RDD - DF
+ ordersDF.show
+ordersDF.select("order_customer_id","order_date").show
+
+
+
+// Row level transformations using Map & String Manipulations (Scala)
+
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders/")
+val str = orders.first
+//str.split(",")(1).substring(0,10).replace("-","").toInt
+
+//orders.map(str => str.split(",")(1).substring(0,10).replace("-","").toInt).first
+
+val orderDates = orders.map(str => {str.split(",")(1).substring(0,10).replace("-","").toInt
+                           })
+
+
+
+val ordersPairedRdd = orders.map(str => {
+val o = str.split(",")
+(o(0).toInt,
+o(1).substring(0,10).replace("-","").toInt
+)
+})
+
+ordersPairedRdd.take(10).foreach(println)
+
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+
+val orderitemsPairedRdd = order_items.map(str => (str.split(",")(1).toInt , str ))
+
+
+// Row level transformations using Flatmap
+val l = List("Hi", "Hello", "are", "you")
+val t = sc.parallelize(l)
+t.flatMap(l => l.split(",")).take(10).foreach(println)
+
+
+// Filter Data rows
+
+orders.count
+orders.filter(order => order.split(",")(3) == "COMPLETE").count
+
+// Get all the orders from 2013-09 which are in closed or complete
+orders.map(order => order.split(",")(3)).distinct.collect.foreach(println)
+val ordersFiltered = orders.filter(order => {
+  val o = order.split(",")
+  (o(3) == "COMPLETE" || o(3) == "CLOSED") && (o(1).contains("2013-09"))
+})
+ordersFiltered.take(10).foreach(println)
+
+
+// Joins
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders/")
+
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+
+val ordersMap = orders.map(o => {
+val l= o.split(",")
+(l(0).toInt , o )
+}
+)
+
+val orderItemsMap = order_items.map(oi => {
+val l= oi.split(",")
+(l(1).toInt , oi)
+}
+)
+
+val ordersjoin = ordersMap.join(orderItemsMap)
+
+// Left Outer Join - Find Missing Order items 
+
+val ordersLeftOuterJoin = ordersMap.leftOuterJoin(orderItemsMap)
+val ordersLeftOuterJoinFilter = ordersLeftOuterJoin.filter( o=>o._2._2 == None)
+val orderWithNoOrderItem = ordersLeftOuterJoin.map( o=>o._2._1)
+
+
+//Right Outer Join
+
+val ordersRightOuterJoin = ordersMap.rightOuterJoin(orderItemsMap)
+
+
+
+// Aggregation using Actions
+
+reduce .. On the whole dataset - Is an Action
+count
+countByKey
+
+
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders/")
+
+orders.map(o=> (o.split(",")(3),1)).first
+
+orders.map(o=> (o.split(",")(3),1)).countByKey.foreach(println)
+
+orders.map(o=> (o.split(",")(3),1)).count
+
+//Reduce
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+order_items.map( o => o.split(",")(4).toFloat).reduce((x,y) => x+y)
+
+
+
+//GroupbyKey
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+
+//Get revenue per OrderID (2nd Field)
+//Get data in Descending order by order_item_subtotal
+
+val orderItemsMap = order_items.map(oi => (oi.split(",")(1).toInt,oi.split(",")(4).toFloat))
+
+val orderItemsGBK =  orderItemsMap.groupByKey
+orderItemsGBK.map(i=>(i._1,i._2.toList.sum)).take(10).foreach(println)
+
+
+orderItemsGBK.flatMap(i=>(i._2.toList.sorted).map(k => (i._1,k))).take(10).foreach(println)
+orderItemsGBK.flatMap(i=>(i._2.toList.sorted)).take(10).foreach(println)
+
+
+
+//Aggregation - Reduce by Key
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+val orderItemsMap = order_items.map(oi => (oi.split(",")(1).toInt,oi.split(",")(4).toFloat))
+
+
+orderItemsMap.reduceByKey((x,y) => x+y).take(100).foreach(println)
+
+
+
+//Aggregation - AggregateByKey
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+val orderItemsMap = order_items.map(oi => (oi.split(",")(1).toInt,oi.split(",")(4).toFloat))
+
+val maxRevenue = orderItemsMap.aggregateByKey((0.0,0))(
+ ((x,y)=> (x._1 + y,     x._2 + 1) )
+,((t,r)=> (t._1 + r._1 , t._2 + r._2 ) )
+)
+
+
+// Sorting Data - Sort by Key
+val order_items = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items/")
+val orderItemsMap = order_items.map(oi => (oi.split(",")(1).toInt,oi.split(",")(4).toFloat))
+val maxRevenue = orderItemsMap.aggregateByKey((0.0,0))(
+ ((x,y)=> (x._1 + y,     x._2 + 1) )
+,((t,r)=> (t._1 + r._1 , t._2 + r._2 ) )
+)
+
+maxRevenue.sortByKey().take(100).foreach(println)    // Sort in Ascending order
+
+maxRevenue.sortByKey(false).take(100).foreach(println)   // Sort in Descending order
+
+
+// Ranking - Global And By Key
+
+Global Ranking = Read Data + Sortby + take
+
+
+
+// takeOrdered
+val products = sc.textFile("/user/cloudera/sqoop_import/retail_db/products/")
+
+products.filter(p => p.split(",")(4) != "").takeOrdered(10)(Ordering[Float].reverse.on(i=>i.split(",")(4).toFloat)).foreach(println)
+
+// By Key Ranking - Get top N priced products with in each product category
+val products = sc.textFile("/user/cloudera/sqoop_import/retail_db/products/")
+val productsMap = products.filter(p => p.split(",")(4) != "").
+map( p=> (p.split(",")(1).toInt,p))
+
+val productsCategoryKey= productsMap.groupByKey
+
+
+def getTopNProducts( pI: Iterable[String], topN: Int): Iterable[String] = {
+val productPrices = pI.map(p =>p.split(",")(4).toFloat).toSet.toList
+val topNPrices = productPrices.sortBy(p=> -p).take(topN)
+val productsSorted = pI.toList.sortBy( p => -p.split(",")(4).toFloat)
+val minPrice = topNPrices.min
+val topNPricedProducts = productsSorted.takeWhile(p => p.split(",")(4).toFloat >= minPrice)
+
+}
+
+
+//Get all the products in descending order by price
+val productsIterable = productsCategoryKey.first._2
+val productPrices = productsIterable.map(p =>p.split(",")(4).toFloat).toSet.toList
+val topNPrices = productPrices.sortBy(p=> -p).take(5)
+val productsSorted = pI.toList.sortBy( p => -p.split(",")(4).toFloat)
+val minPrice = topNPrices.min
+val topNPricedProducts = productsSorted.takeWhile(p => p.split(",")(4).toFloat >= minPrice)
+
+
+
+
+//Top 3 Products
+productsCategoryKey.flatMap( rec => getTopNProducts(rec._2,3)).take(10).foreach(println)
+
+//Top priced Products
+productsCategoryKey.flatMap( rec => getTopNProducts(rec._2,1)).take(10).foreach(println)
+
+
+
+
+//Set Opereation
+
+spark-shell \
+--master yarn \
+--conf spark.ui.port=12695 \
+--num-executors 3 \
+--executor-memory 512M 
+
+
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders/")
+val t = orders.map(o=>(o.split(",")(2).toInt,o.split(",")(1).substring(0,10).toString)).first
+
+val ordersAug = orders.map(o=>(o.split(",")(2).toInt,o.split(",")(1).substring(0,10).toString)).filter(d=>d._2.contains("2013-08")).map(o=>o._1) 
+
+val ordersSep = orders.map(o=>(o.split(",")(2).toInt,o.split(",")(1).substring(0,10).toString)).filter(d=>d._2.contains("2013-09")).map(o=>o._1) 
+
+// Customers placing orders,  both in Aug and Sep
+ordersSep.intersection(ordersAug)
+
+//All customers , who placed orders in Aug and Sep
+ ordersSep.union(ordersAug)
+
+//All customers , who placed orders in Aug and not in Sep
+val Aug = ordersAug.map(o=> (o,1))
+val Sep = ordersSep.map(o=> (o,1))
+
+// Minus Operation using (Left)outerjoin 
+Aug.leftOuterJoin(Sep).filter(r => r._2._2==None).map(d=>d._1).distinct.count
+
+
+
+
+
+//Saving Rdd to HDFS
+//saveAsTextFile - Important
+//saveAsSequenceFile
+//saveAsObjectFile
+
+
+//Get Orders DataSet
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders/")
+val t = orders.map(o=>(o.split(",")(2).toInt,o.split(",")(1).substring(0,10).toString)).first
+val orderCountByStatus = orders.map(o=>(o.split(",")(3),1)).reduceByKey( (x,y )=> x+y)
+
+//Saves Data as a tuple
+orderCountByStatus.saveAsTextFile("/user/cloudera/sqoop_import/retail_db/orders_RDD/count_by_status")
+
+//Saves data, after formatting
+orderCountByStatus.
+map(rec=> rec._1 + "," + rec._2).
+saveAsTextFile("/user/cloudera/sqoop_import/retail_db/orders_RDD_CSV/count_by_status")
+
+
+//Saves data with Compression, after formatting
+orderCountByStatus.
+map(rec=> rec._1 + "," + rec._2).
+saveAsTextFile("/user/cloudera/sqoop_import/retail_db/orders_RDD_CSV_Compressed/count_by_status", classOf[org.apache.hadoop.io.compress.SnappyCodec])
+
+
+//Saving Data in Different File formats
+
+//Supportd File formats
+// - orc,json,parquet, avro
+
+
+//Steps - Convert RDD into DF(Data Frame), Usw Write to save As, use compression if, required.
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

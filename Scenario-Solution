@@ -1,0 +1,77 @@
+//Use retail_db
+
+Problem Statement:
+-Get daily Revenue by Date, product, where completed and Closed Orders.
+-Sort by date asc, revenue desc
+-order_date, dailyrevenue_per_product,Product_name Delimited by "," 
+
+spark-shell \
+--master yarn \
+--conf spark.ui.port=12659 \
+--num-executors 3 \
+--executor-memory 512M
+
+
+val orders = sc.textFile("/user/cloudera/sqoop_import/retail_db/orders")
+orders.count -- 68883
+
+val orderItems = sc.textFile("/user/cloudera/sqoop_import/retail_db/order_items")
+orderItems.count -- 172198
+
+val products_raw =   scala.io.Source.fromFile("/home/cloudera/workspace/learning_data/data-master/retail_db/products/part-00000").getLines.toList
+
+val products = sc.parallelize(products_raw)
+products.count -- 1345
+
+orders.map( o => o.split(",")(2)).first 
+
+val ordersFiltered= orders.filter( o => (o.split(",")(3)=="CLOSED") | (o.split(",")(3)=="COMPLETE") )
+
+val ordersMap = ordersFiltered.map(o=>(o.split(",")(0).toInt, o.split(",")(1)))
+
+val orderItemsMap = orderItems.map(o=>(o.split(",")(1).toInt, (o.split(",")(2).toInt,o.split(",")(4).toFloat)))
+
+val ordersJoin = ordersMap.join(orderItemsMap)
+
+val ordersRevenue = ordersJoin.map(l=> ((l._2._1, l._2._2._1), l._2._2._2.toFloat)).reduceByKey((x,y)=>x+y).
+map(d=> (d._1._2,( d._1._1, d._2) ) )
+
+val productName = products.map(p=>(p.split(",")(0).toInt,p.split(",")(2))) 
+
+val productsDailyRevenue= productName.join(ordersRevenue).map(d=>((d._2._2._1, -d._2._2._2), (d._2._2._1,d._2._2._2,d._2._1 ) )).sortByKey().map(rec => rec._2._1 + "," + rec._2._2 + "," + rec._2._3 + "," )
+
+
+productsDailyRevenue.saveAsTextFile("")
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
