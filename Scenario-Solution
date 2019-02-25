@@ -33,6 +33,8 @@ val orderItemsMap = orderItems.map(o=>(o.split(",")(1).toInt, (o.split(",")(2).t
 
 val ordersJoin = ordersMap.join(orderItemsMap)
 
+
+
 val ordersRevenue = ordersJoin.map(l=> ((l._2._1, l._2._2._1), l._2._2._2.toFloat)).reduceByKey((x,y)=>x+y).
 map(d=> (d._1._2,( d._1._1, d._2) ) )
 
